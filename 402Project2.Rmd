@@ -1,0 +1,302 @@
+---
+title: "402 Project 2"
+author: "Stephanie Lao"
+date: "11/30/2021"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+```{r}
+players <- read.csv('players_21_with_target_copy.csv')
+head(players)
+```
+```{r}
+library(dplyr)
+players <- players %>% mutate(top5league=ifelse(league_name=='English Premier League' | league_name=='French Ligue 1'| league_name=='Spain Primera Division' | league_name=='German 1. Bundesliga' | league_name=='Italian Serie A', T,F))
+```
+
+```{r}
+table(players$top5league)
+```
+
+```{r}
+players <- players %>% mutate(league_name_grouped=ifelse(league_name!='English Premier League' & league_name!='French Ligue 1' & league_name!='Spain Primera Division' & league_name!='German 1. Bundesliga' & league_name!= 'Italian Serie A', 'Other', players$league_name))
+```
+
+
+```{r}
+table(players$league_name_grouped)
+```
+
+
+```{r}
+players <- players %>% mutate(league_name_grouped=ifelse(league_name_grouped=='French Ligue 1' | league_name_grouped=='Spain Primera Division' | league_name_grouped=='German 1. Bundesliga' | league_name_grouped== 'Italian Serie A', 'F/G/I/S', players$league_name_grouped))
+```
+
+```{r}
+table(players$league_name_grouped)
+```
+
+
+
+```{r}
+table(players$league_name_grouped)
+```
+
+```{r}
+m1 <- aov(wage_eur ~ league_name_grouped, data = players)
+summary(m1)
+```
+
+```{r}
+tapply(players$wage_eur, players$league_name_grouped, mean, na.rm = TRUE)
+```
+
+
+```{r}
+drops <- c('wage_eur', 'wage_eur_log', 'release_clause_eur', 'value_eur', 'sofifa_id', 'player_url', 'team_jersey_number', 'short_name', 'long_name', "ls", "st", "rs", "lw", "lf", "cf", "rf", "rw", "lam", "cam", "ram", "lm", "lcm", "cm", "rcm", "rm", "lwb", "ldm", "cdm", "rdm", "rwb", "lb", "lcb", "cb", "rcb", "rb", "dob", "body_type", "real_face")
+players <- players[ , !(names(players) %in% drops)]
+```
+
+
+```{r}
+smp_size <- floor(0.75 * nrow(players))
+set.seed(1)
+train_ind <- sample(seq_len(nrow(players)), size = smp_size)
+
+train <- players[train_ind, ]
+test <- players[-train_ind, ]
+```
+
+
+```{r}
+library(randomForest)
+wage.rf <- randomForest(factor(wage_cat) ~ ., data = train, importance = TRUE, na.action = na.omit)
+print(wage.rf)
+```
+
+
+```{r}
+library(ggplot2)
+library(dplyr)
+# make dataframe from importance() output
+feat_imp_df <- importance(wage.rf, type=2) %>% 
+  data.frame() %>% 
+  mutate(feature = row.names(.)) 
+
+feat_imp_df <- feat_imp_df[order(feat_imp_df$MeanDecreaseGini, decreasing = TRUE),]
+```
+
+
+```{r}
+library(nnet)
+model1 <- multinom(wage_cat ~ overall + movement_reactions + league_name + mentality_composure + skill_ball_control + defending + dribbling, data = train)
+summary(model1, Wald.ratios = TRUE)
+```
+
+```{r}
+model2 <- multinom(wage_cat ~ overall + movement_reactions + top5league + mentality_composure + skill_ball_control + defending + dribbling, data = train)
+summary(model2, Wald.ratios = TRUE)
+```
+
+```{r}
+model3 <- multinom(wage_cat ~ overall + movement_reactions + league_name_grouped + mentality_composure + skill_ball_control + defending + dribbling, data = train)
+summary(model3, Wald.ratios = TRUE)
+```
+
+```{r}
+model4 <- multinom(wage_cat ~ overall + top5league, data = train)
+summary(model4, Wald.ratios = TRUE)
+```
+
+
+```{r}
+pdata <- predict(model3, test)
+confusionMatrix(pdata, reference = factor(test$wage_cat))
+```
+
+```{r}
+library(sjPlot)
+plot_model(model3)
+```
+
+
+```{r}
+library(caret)
+pdata <- predict(model2, test)
+confusionMatrix(pdata, reference = factor(test$wage_cat))
+
+pdata <- predict(model4, test)
+confusionMatrix(pdata, reference = factor(test$wage_cat))
+```
+
+```{r}
+z <- summary(model2)$coefficients / summary(model2)$standard.errors
+z
+```
+
+```{r}
+p <- (1 - pnorm(abs(z), 0, 1))*2
+p
+```
+
+
+
+```{r}
+exp(coef(model2))
+```
+
+```{r}
+confint(model2)
+```
+
+```{r}
+library(sjPlot)
+plot_model(model2)
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+```{r}
+lambdas <- 10^seq(2, -3, by = -.1)
+# Setting alpha = 1 implements lasso regression
+lasso_reg <- cv.glmnet(x, y, alpha = 1, standardize = TRUE, family = 'multinomial')
+
+# Best 
+lambda_best <- lasso_reg$lambda.min 
+lambda_best
+```
+
+```{r}
+data <- na.omit(players) 
+y <- data$wage_cat
+drops <- c('wage_cat')
+x <- data.matrix(data[, !(names(data) %in% drops)])
+```
+
+```{r}
+cv_model <- cv.glmnet(x, y, alpha = 1, family='multinomial', type.multinomial = 'grouped')
+
+#find optimal lambda value that minimizes test MSE
+best_lambda <- cv_model$lambda.min
+best_lambda
+
+#produce plot of test MSE by lambda value
+plot(cv_model)
+```
+
+
+```{r}
+fit <- glmnet(x, y, family = 'multinomial', type.multinomial = 'grouped')
+plot(fit, xvar='lambda', label = TRUE, type.coef = '2norm')
+```
+
+
+```{r}
+library("dplyr")
+library("faux")
+library("DataExplorer")
+library("caret")
+library("randomForest")
+
+control <- rfeControl(functions = rfFuncs, # random forest
+                      method = "repeatedcv", # repeated cv
+                      repeats = 5, # number of repeats
+                      number = 10) # number of folds
+```
+
+
+
+```{r}
+data <- players %>%
+  # Save categorical features as factors
+  mutate_at(c("nationality", "club_name", "league_name", "player_positions", "preferred_foot", "work_rate", "team_position", "joined", "top5league", "wage_cat", "league_name_grouped"), 
+            as.factor) %>%
+  # Center and scale numeric features
+  mutate_if(is.numeric, scale)
+
+data <- na.omit(data) 
+```
+
+
+```{r}
+x <- data %>%
+  select(-wage_cat, -league_name, -club_name, -team_position) %>%
+  as.data.frame()
+
+# Target variable
+y <- data$wage_cat
+
+# Training: 80%; Test: 20%
+set.seed(2021)
+inTrain <- createDataPartition(y, p = .80, list = FALSE)[,1]
+
+x_train <- x[ inTrain, ]
+x_test  <- x[-inTrain, ]
+
+y_train <- y[ inTrain]
+y_test  <- y[-inTrain]
+```
+
+
+```{r}
+result_rfe1 <- rfe(x = x_train, 
+                   y = y_train, 
+                   sizes = c(1:13),
+                   rfeControl = control)
+
+# Print the results
+result_rfe1
+
+# Print the selected features
+predictors(result_rfe1)
+
+# Print the results visually
+ggplot(data = result_rfe1, metric = "Accuracy") + theme_bw()
+ggplot(data = result_rfe1, metric = "Kappa") + theme_bw()
+```
+
