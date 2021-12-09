@@ -1,6 +1,6 @@
 ---
-title: "402 Project 2"
-author: "Stephanie Lao"
+title: "Project 2 Modeling & Interaction Effects"
+author: "Group 6"
 date: "11/30/2021"
 output: pdf_document
 ---
@@ -10,9 +10,11 @@ knitr::opts_chunk$set(echo = TRUE)
 ```
 
 ```{r}
-players <- read.csv('players_21_with_target_copy.csv')
-head(players)
+players <- read.csv('clean_data.csv')
 ```
+
+Below we create a column called `top5league` that is true when the player is in one of the top 5 leagues or false when the player is not in one of the top 5 leagues.
+
 ```{r}
 library(dplyr)
 players <- players %>% mutate(top5league=ifelse(league_name=='English Premier League' | league_name=='French Ligue 1'| league_name=='Spain Primera Division' | league_name=='German 1. Bundesliga' | league_name=='Italian Serie A', T,F))
@@ -22,29 +24,6 @@ players <- players %>% mutate(top5league=ifelse(league_name=='English Premier Le
 table(players$top5league)
 ```
 
-```{r}
-players <- players %>% mutate(league_name_grouped=ifelse(league_name!='English Premier League' & league_name!='French Ligue 1' & league_name!='Spain Primera Division' & league_name!='German 1. Bundesliga' & league_name!= 'Italian Serie A', 'Other', players$league_name))
-```
-
-
-```{r}
-table(players$league_name_grouped)
-```
-
-
-```{r}
-players <- players %>% mutate(league_name_grouped=ifelse(league_name_grouped=='French Ligue 1' | league_name_grouped=='Spain Primera Division' | league_name_grouped=='German 1. Bundesliga' | league_name_grouped== 'Italian Serie A', 'F/G/I/S', players$league_name_grouped))
-```
-
-```{r}
-table(players$league_name_grouped)
-```
-
-
-
-```{r}
-table(players$league_name_grouped)
-```
 
 ```{r}
 m1 <- aov(wage_eur ~ league_name_grouped, data = players)
@@ -55,12 +34,17 @@ summary(m1)
 tapply(players$wage_eur, players$league_name_grouped, mean, na.rm = TRUE)
 ```
 
+We drop columns that are either meaningless to this study or that are directly related to our target variable, to make modeling easier later on.
 
 ```{r}
-drops <- c('wage_eur', 'wage_eur_log', 'release_clause_eur', 'value_eur', 'sofifa_id', 'player_url', 'team_jersey_number', 'short_name', 'long_name', "ls", "st", "rs", "lw", "lf", "cf", "rf", "rw", "lam", "cam", "ram", "lm", "lcm", "cm", "rcm", "rm", "lwb", "ldm", "cdm", "rdm", "rwb", "lb", "lcb", "cb", "rcb", "rb", "dob", "body_type", "real_face")
+drops <- c('wage_eur', 'release_clause_eur', 'value_eur', 'sofifa_id', 'player_url', 'team_jersey_number', 'short_name', 'long_name', "ls", "st", "rs", "lw", "lf", "cf", "rf", "rw", "lam", "cam", "ram", "lm", "lcm", "cm", "rcm", "rm", "lwb", "ldm", "cdm", "rdm", "rwb", "lb", "lcb", "cb", "rcb", "rb", "dob", "body_type", "real_face")
 players <- players[ , !(names(players) %in% drops)]
 ```
 
+```{r}
+head(players)
+```
+We create training and testing data sets.
 
 ```{r}
 smp_size <- floor(0.75 * nrow(players))
@@ -71,10 +55,11 @@ train <- players[train_ind, ]
 test <- players[-train_ind, ]
 ```
 
+We run random forest for feature importance.
 
 ```{r}
 library(randomForest)
-wage.rf <- randomForest(factor(wage_cat) ~ ., data = train, importance = TRUE, na.action = na.omit)
+wage.rf <- randomForest(factor(wage_cat) ~ . - wage_eur_log, data = train, importance = TRUE, na.action = na.omit)
 print(wage.rf)
 ```
 
@@ -90,51 +75,89 @@ feat_imp_df <- importance(wage.rf, type=2) %>%
 feat_imp_df <- feat_imp_df[order(feat_imp_df$MeanDecreaseGini, decreasing = TRUE),]
 ```
 
+```{r}
+feat_imp_df
+```
+
+We use the important features selected by random forest for our first model.
 
 ```{r}
 library(nnet)
-model1 <- multinom(wage_cat ~ overall + movement_reactions + league_name + mentality_composure + skill_ball_control + defending + dribbling, data = train)
+model1 <- multinom(wage_cat ~ overall + movement_reactions + mentality_composure + skill_ball_control + age + top5league + dribbling + potential + defending, data = train)
 summary(model1, Wald.ratios = TRUE)
 ```
 
 ```{r}
-model2 <- multinom(wage_cat ~ overall + movement_reactions + top5league + mentality_composure + skill_ball_control + defending + dribbling, data = train)
+library(caret)
+pdata <- predict(model1, test)
+confusionMatrix(pdata, reference = factor(test$wage_cat))
+```
+
+We replace `top5league` with `league_name_grouped` to see if the model performs better.
+
+```{r}
+model2 <- multinom(wage_cat ~ overall + movement_reactions + mentality_composure + skill_ball_control + age + league_name_grouped + dribbling + potential + defending, data = train)
 summary(model2, Wald.ratios = TRUE)
 ```
 
 ```{r}
-model3 <- multinom(wage_cat ~ overall + movement_reactions + league_name_grouped + mentality_composure + skill_ball_control + defending + dribbling, data = train)
-summary(model3, Wald.ratios = TRUE)
+pdata <- predict(model2, test)
+confusionMatrix(pdata, reference = factor(test$wage_cat))
+```
+
+We use the step() function.
+
+```{r}
+set.seed(1)
+stepmodel <- step(model2)
+```
+```{r}
+stepmodel
 ```
 
 ```{r}
-model4 <- multinom(wage_cat ~ overall + top5league, data = train)
-summary(model4, Wald.ratios = TRUE)
+pdata <- predict(stepmodel, test)
+confusionMatrix(pdata, reference = factor(test$wage_cat))
 ```
 
+The following models are models in which we manually choose the predictors, taking into account our knowledge of the sport.
+
+```{r}
+model3 <- multinom(wage_cat ~ overall + movement_reactions + mentality_composure + skill_ball_control + age + league_name_grouped, data = train)
+summary(model3, Wald.ratios = TRUE)
+```
 
 ```{r}
 pdata <- predict(model3, test)
 confusionMatrix(pdata, reference = factor(test$wage_cat))
 ```
 
+
 ```{r}
-library(sjPlot)
-plot_model(model3)
+model4 <- multinom(wage_cat ~ overall + league_name_grouped + defending, data = train)
+summary(model4, Wald.ratios = TRUE)
 ```
 
-
 ```{r}
-library(caret)
-pdata <- predict(model2, test)
-confusionMatrix(pdata, reference = factor(test$wage_cat))
-
 pdata <- predict(model4, test)
 confusionMatrix(pdata, reference = factor(test$wage_cat))
 ```
 
+
 ```{r}
-z <- summary(model2)$coefficients / summary(model2)$standard.errors
+model5 <- multinom(wage_cat ~ overall + defending + top5league, data = train)
+summary(model5, Wald.ratios = TRUE)
+```
+
+```{r}
+pdata <- predict(model5, test)
+confusionMatrix(pdata, reference = factor(test$wage_cat))
+```
+
+Out of all the models so far, it seems like model 4 performs the best. Let's look into model 4 more.
+
+```{r}
+z <- summary(model4)$coefficients / summary(model4)$standard.errors
 z
 ```
 
@@ -143,160 +166,163 @@ p <- (1 - pnorm(abs(z), 0, 1))*2
 p
 ```
 
-
-
 ```{r}
-exp(coef(model2))
+coef(model4)
 ```
 
 ```{r}
-confint(model2)
+confint(model4)
 ```
+
+
+```{r}
+exp(coef(model4))
+```
+
+```{r}
+exp(coef(model4)*10)
+```
+
+```{r}
+exp(confint(model4))
+```
+
 
 ```{r}
 library(sjPlot)
-plot_model(model2)
-```
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-```{r}
-lambdas <- 10^seq(2, -3, by = -.1)
-# Setting alpha = 1 implements lasso regression
-lasso_reg <- cv.glmnet(x, y, alpha = 1, standardize = TRUE, family = 'multinomial')
-
-# Best 
-lambda_best <- lasso_reg$lambda.min 
-lambda_best
+plot_model(model4)
 ```
 
 ```{r}
-data <- na.omit(players) 
-y <- data$wage_cat
-drops <- c('wage_cat')
-x <- data.matrix(data[, !(names(data) %in% drops)])
+lm <- lm(wage_eur_log ~ overall + league_name_grouped + defending, data=players)
+summary(lm)
 ```
 
 ```{r}
-cv_model <- cv.glmnet(x, y, alpha = 1, family='multinomial', type.multinomial = 'grouped')
+library(car)
+vif(lm)
+```
 
-#find optimal lambda value that minimizes test MSE
-best_lambda <- cv_model$lambda.min
-best_lambda
-
-#produce plot of test MSE by lambda value
-plot(cv_model)
+```{r}
+plot(lm)
 ```
 
 
 ```{r}
-fit <- glmnet(x, y, family = 'multinomial', type.multinomial = 'grouped')
-plot(fit, xvar='lambda', label = TRUE, type.coef = '2norm')
+library(car)
+Anova(model4)
+```
+
+```{r}
+model6 <- multinom(wage_cat ~ league_name_grouped, data = train)
+model7 <- multinom(wage_cat ~ overall, data = train)
+model8 <- multinom(wage_cat ~ defending, data = train)
+```
+
+```{r}
+library(effects)
+plot(allEffects(model6), ask = FALSE)
+plot(allEffects(model7), ask = FALSE)
+plot(allEffects(model8), ask = FALSE)
 ```
 
 
 ```{r}
-library("dplyr")
-library("faux")
-library("DataExplorer")
-library("caret")
-library("randomForest")
-
-control <- rfeControl(functions = rfFuncs, # random forest
-                      method = "repeatedcv", # repeated cv
-                      repeats = 5, # number of repeats
-                      number = 10) # number of folds
+chisq.test(test$wage_cat,predict(model4, test))
 ```
 
 
+Now let's delve into models with interaction effects.
 
 ```{r}
-data <- players %>%
-  # Save categorical features as factors
-  mutate_at(c("nationality", "club_name", "league_name", "player_positions", "preferred_foot", "work_rate", "team_position", "joined", "top5league", "wage_cat", "league_name_grouped"), 
-            as.factor) %>%
-  # Center and scale numeric features
-  mutate_if(is.numeric, scale)
-
-data <- na.omit(data) 
+model9 <- multinom(wage_cat ~ league_name_grouped * overall + defending, data = train)
+summary(model9)
+plot(allEffects(model9))
 ```
 
+```{r}
+pdata <- predict(model9, test)
+confusionMatrix(pdata, reference = factor(test$wage_cat))
+```
 
 ```{r}
-x <- data %>%
-  select(-wage_cat, -league_name, -club_name, -team_position) %>%
-  as.data.frame()
+model10 <- multinom(wage_cat ~ league_name_grouped * defending + overall, data = train)
+summary(model10)
+plot(allEffects(model10))
+```
 
-# Target variable
-y <- data$wage_cat
+```{r}
+pdata <- predict(model10, test)
+confusionMatrix(pdata, reference = factor(test$wage_cat))
+```
 
-# Training: 80%; Test: 20%
-set.seed(2021)
-inTrain <- createDataPartition(y, p = .80, list = FALSE)[,1]
-
-x_train <- x[ inTrain, ]
-x_test  <- x[-inTrain, ]
-
-y_train <- y[ inTrain]
-y_test  <- y[-inTrain]
+```{r}
+model11 <- multinom(wage_cat ~ league_name_grouped * overall, data = train)
+summary(model11)
+plot(allEffects(model11))
 ```
 
 
 ```{r}
-result_rfe1 <- rfe(x = x_train, 
-                   y = y_train, 
-                   sizes = c(1:13),
-                   rfeControl = control)
-
-# Print the results
-result_rfe1
-
-# Print the selected features
-predictors(result_rfe1)
-
-# Print the results visually
-ggplot(data = result_rfe1, metric = "Accuracy") + theme_bw()
-ggplot(data = result_rfe1, metric = "Kappa") + theme_bw()
+pdata <- predict(model11, test)
+confusionMatrix(pdata, reference = factor(test$wage_cat))
 ```
 
+```{r}
+model12 <- multinom(wage_cat ~ league_name_grouped * defending, data = train)
+summary(model12)
+plot(allEffects(model12))
+```
+
+
+```{r}
+pdata <- predict(model12, test)
+confusionMatrix(pdata, reference = factor(test$wage_cat))
+```
+
+It seems like model 10 does pretty well. Let's look into this model more.
+
+```{r}
+z <- summary(model10)$coefficients / summary(model10)$standard.errors
+z
+```
+
+```{r}
+p <- (1 - pnorm(abs(z), 0, 1))*2
+p
+```
+
+```{r}
+coef(model10)
+```
+
+```{r}
+confint(model10)
+```
+
+```{r}
+exp(coef(model10))
+```
+
+```{r}
+exp(confint(model10))
+```
+
+
+```{r}
+library(sjPlot)
+plot_model(model10)
+```
+
+```{r}
+print(paste("Pearson's X^2 =",round(sum(residuals(model10,type="pearson")^2),3)))
+```
+
+
+```{r}
+Anova(model10)
+```
+
+```{r}
+chisq.test(test$wage_cat,predict(model10, test))
+```
